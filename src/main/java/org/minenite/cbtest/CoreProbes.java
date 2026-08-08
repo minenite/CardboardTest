@@ -186,7 +186,7 @@ final class CoreProbes implements Listener {
             // correctly. Measuring an entity in a state no plugin encounters is
             // worse than not measuring it, because it produces false failures that
             // get written down as known issues.
-            Bukkit.getScheduler().runTaskLater(this.plugin, () -> this.entitiesDeferred(zombie), 2L);
+            Bukkit.getScheduler().runTaskLater(this.plugin, () -> this.entitiesDeferred(zombie), 40L);
         });
     }
 
@@ -199,7 +199,7 @@ final class CoreProbes implements Listener {
             // condition: "vanished" told us nothing about which of the three was
             // false, and isValid() in particular depends on CardForge's own
             // tracking flag rather than on the entity being alive.
-            out.add("[INFO] entities: after 2 ticks dead=" + zombie.isDead()
+            out.add("[INFO] entities: after 40 ticks dead=" + zombie.isDead()
                     + " valid=" + zombie.isValid()
                     + " health=" + zombie.getHealth());
             if (zombie.isDead()) {
