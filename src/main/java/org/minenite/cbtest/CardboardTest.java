@@ -8,6 +8,7 @@ import java.util.List;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -47,8 +48,18 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         String mode = args.length == 0 ? "all" : args[0].toLowerCase();
+
+        // The cross-ecosystem probes only need a world, so they can run from the
+        // console. That matters because it lets the whole mod-compatibility check
+        // run in an automated boot test, with no client attached.
         if (!(sender instanceof Player player)) {
-            sender.sendMessage("CardboardTest must be run by a player.");
+            if (mode.equals("mods")) {
+                this.results.clear();
+                this.probeModdedContent(null);
+                this.report(sender);
+                return true;
+            }
+            sender.sendMessage("CardboardTest: only 'mods' can run from the console.");
             return true;
         }
 
@@ -57,18 +68,24 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             case "gui" -> this.openGui(player);
             case "nms" -> this.probeNms(player);
             case "meta" -> this.probeItemMeta(player);
+            case "mods" -> this.probeModdedContent(player);
             default -> {
                 this.probeNms(player);
                 this.probeItemMeta(player);
+                this.probeModdedContent(player);
                 this.openGui(player);
             }
         }
 
+        this.report(player);
+        return true;
+    }
+
+    private void report(CommandSender sender) {
         for (String line : this.results) {
-            player.sendMessage(line);
+            sender.sendMessage(line);
             getLogger().info(ChatColor.stripColor(line));
         }
-        return true;
     }
 
     // ---------- custom inventory ----------
@@ -123,6 +140,173 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             pass("item meta: added the probe item to the player inventory");
         } catch (Throwable t) {
             fail("item meta: " + t);
+        }
+    }
+
+    // ---------- cross-ecosystem: NeoForge mod content through the Bukkit API ----------
+
+    /**
+     * The point of CardForge is that Bukkit plugins and NeoForge mods share one
+     * server, so the interesting question is not whether either works alone but
+     * whether a plugin can see and manipulate content a mod registered.
+     *
+     * These probes are skipped, not failed, when the mod is absent, so the plugin
+     * stays useful on a server with no mods installed.
+     */
+    private void probeModdedContent(Player player) {
+        final String moddedBlockId = "waystones:andesite_waystone";
+        // Deliberately an item with no block form, so this probe cannot be
+        // satisfied by the block registration path.
+        final String moddedItemId = "waystones:bound_scroll";
+
+        // 1. A modded block should have been injected into the Material registry.
+        Material block = matchModded(moddedBlockId);
+        if (block == null) {
+            skip("modded: " + moddedBlockId + " not present (mod not installed?) - skipping mod probes");
+            this.describeRegistry("waystones");
+            return;
+        }
+        pass("modded: block " + moddedBlockId + " -> Material." + block.name());
+
+        // Does Paper's own type registry already know the mod's content? If it
+        // does, the only thing wrong with modded Materials is their key field.
+        for (String id : new String[]{moddedBlockId, "waystones:bound_scroll"}) {
+            NamespacedKey k = NamespacedKey.fromString(id);
+            try {
+                pass("modded: Registry.ITEM.get(" + id + ") -> " + org.bukkit.Registry.ITEM.get(k));
+            } catch (Throwable t) {
+                fail("modded: Registry.ITEM.get(" + id + "): " + t);
+            }
+            try {
+                pass("modded: Registry.BLOCK.get(" + id + ") -> " + org.bukkit.Registry.BLOCK.get(k));
+            } catch (Throwable t) {
+                fail("modded: Registry.BLOCK.get(" + id + "): " + t);
+            }
+        }
+
+        // 2. NamespacedKey should round-trip back to the mod's own id.
+        try {
+            NamespacedKey key = block.getKey();
+            if (moddedBlockId.equals(key.toString())) {
+                pass("modded: Material#getKey round-tripped to " + key);
+            } else {
+                fail("modded: key round-trip gave " + key + ", expected " + moddedBlockId);
+            }
+        } catch (Throwable t) {
+            fail("modded: Material#getKey: " + t);
+        }
+
+        // 3. A modded item should resolve and survive being made into an ItemStack.
+        Material item = matchModded(moddedItemId);
+        if (item == null) {
+            fail("modded: item " + moddedItemId + " did not resolve to a Material"
+                    + " (blocks registered but items did not)");
+        } else {
+            try {
+                ItemStack stack = new ItemStack(item);
+                String where = "";
+                if (player != null) {
+                    player.getInventory().addItem(stack);
+                    where = ", given to player";
+                }
+                pass("modded: item " + moddedItemId + " -> Material." + item.name()
+                        + ", ItemStack created (amount " + stack.getAmount() + ")" + where);
+            } catch (Throwable t) {
+                fail("modded: ItemStack of " + moddedItemId + ": " + t);
+            }
+        }
+
+        // 4. The real test: place the modded block through the Bukkit API and read
+        //    it back. This exercises Bukkit -> NMS block state conversion for a
+        //    block that only exists because a NeoForge mod registered it.
+        try {
+            org.bukkit.Location at = player != null
+                    ? player.getLocation().add(0, -1, 2)
+                    : Bukkit.getWorlds().get(0).getSpawnLocation().add(0, -1, 2);
+            org.bukkit.block.Block target = at.getBlock();
+            Material previous = target.getType();
+            target.setType(block);
+
+            Material readBack = target.getType();
+            if (readBack == block) {
+                pass("modded: placed " + block.name() + " via Bukkit and read it back");
+            } else {
+                fail("modded: placed " + block.name() + " but read back " + readBack);
+            }
+
+            // A modded block placed by a plugin should also carry its mod's block
+            // entity, which is what makes the mod's own behaviour work.
+            org.bukkit.block.BlockState state = target.getState();
+            pass("modded: block state -> " + state.getClass().getSimpleName());
+
+            target.setType(previous);
+        } catch (Throwable t) {
+            fail("modded: place/read modded block: " + t);
+        }
+
+        // 5. How much modded content made it into the registry at all.
+        int modded = 0;
+        for (Material m : Material.values()) {
+            if (m.name().startsWith("WAYSTONES_")) {
+                modded++;
+            }
+        }
+        pass("modded: " + modded + " waystones materials in Material.values() (length "
+                + Material.values().length + ")");
+
+        // If values() disagrees with the backing $VALUES array, the enum extension
+        // wrote the field but values() is not observing it.
+        try {
+            Field vf = Material.class.getDeclaredField("$VALUES");
+            vf.setAccessible(true);
+            Material[] backing = (Material[]) vf.get(null);
+            int inBacking = 0;
+            for (Material m : backing) {
+                if (m.name().startsWith("WAYSTONES_")) inBacking++;
+            }
+            pass("modded: $VALUES length " + backing.length + ", waystones in it: " + inBacking);
+        } catch (Throwable t) {
+            fail("modded: reading $VALUES: " + t);
+        }
+    }
+
+    /** Resolves a namespaced mod id to whatever Material name CardForge gave it. */
+    private Material matchModded(String namespacedId) {
+        String expected = namespacedId.replace(':', '_').toUpperCase();
+
+        Material byName = Material.getMaterial(expected);
+        if (byName != null) {
+            return byName;
+        }
+        // getMaterial() reads a name map that enum extension may not have updated,
+        // so fall back to scanning values(), and vice versa.
+        for (Material m : Material.values()) {
+            if (m.name().equals(expected)) {
+                return m;
+            }
+        }
+        return null;
+    }
+
+    /** Reports what modded content is actually reachable, so a miss is diagnosable. */
+    private void describeRegistry(String namespace) {
+        int total = 0;
+        List<String> sample = new ArrayList<>();
+        for (Material m : Material.values()) {
+            total++;
+            if (m.name().toUpperCase().contains(namespace.toUpperCase()) && sample.size() < 5) {
+                sample.add(m.name());
+            }
+        }
+        skip("modded: Material.values() has " + total + " entries; matching '"
+                + namespace + "': " + (sample.isEmpty() ? "none" : String.join(", ", sample)));
+
+        try {
+            org.bukkit.NamespacedKey key = org.bukkit.NamespacedKey.fromString(namespace + ":andesite_waystone");
+            skip("modded: Registry.MATERIAL lookup of " + key + " -> "
+                    + org.bukkit.Registry.MATERIAL.get(key));
+        } catch (Throwable t) {
+            skip("modded: Registry.MATERIAL lookup threw " + t);
         }
     }
 
@@ -221,6 +405,10 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
 
     private void pass(String message) {
         this.results.add(ChatColor.GREEN + "[PASS] " + ChatColor.RESET + message);
+    }
+
+    private void skip(String message) {
+        this.results.add(ChatColor.YELLOW + "[SKIP] " + ChatColor.RESET + message);
     }
 
     private void fail(String message) {
