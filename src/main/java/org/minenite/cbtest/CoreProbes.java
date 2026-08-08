@@ -171,9 +171,14 @@ final class CoreProbes implements Listener {
         probe("entities", () -> {
             Location at = world.getSpawnLocation().clone().add(0, 1, 5);
 
-            Entity spawned = world.spawnEntity(at, EntityType.ZOMBIE);
-            if (!(spawned instanceof Zombie zombie)) {
-                this.fail.accept("entities: spawnEntity did not return a Zombie");
+            // A passive mob on purpose. A hostile one despawns when no player is
+            // nearby, and the automated suite runs with nobody online - which made
+            // this probe report a damage failure that was really the subject being
+            // removed. The isolated DamageProbe covers the same ground and reached
+            // the same conclusion once it stopped using a zombie.
+            Entity spawned = world.spawnEntity(at, EntityType.COW);
+            if (!(spawned instanceof LivingEntity zombie)) {
+                this.fail.accept("entities: spawnEntity did not return a living entity");
                 return;
             }
             // Keep it alive. The automated suite runs with nobody online, and a
@@ -199,7 +204,7 @@ final class CoreProbes implements Listener {
     }
 
     /** The parts of the entity probe that need the entity to be live. */
-    private void entitiesDeferred(Zombie zombie) {
+    private void entitiesDeferred(LivingEntity zombie) {
         // Runs after the synchronous report, so these log themselves.
         java.util.List<String> out = new java.util.ArrayList<>();
         try {
@@ -211,7 +216,7 @@ final class CoreProbes implements Listener {
                     + " valid=" + zombie.isValid()
                     + " health=" + zombie.getHealth());
             if (zombie.isDead()) {
-                out.add("[FAIL] entities: zombie died before the deferred checks could run;"
+                out.add("[FAIL] entities: subject was removed before the deferred checks ran;"
                         + " damage events seen: " + this.damageLog);
                 this.emit(out);
                 HandlerList.unregisterAll(this);
