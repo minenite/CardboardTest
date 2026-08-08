@@ -244,29 +244,72 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             fail("modded: place/read modded block: " + t);
         }
 
-        // 5. How much modded content made it into the registry at all.
-        int modded = 0;
-        for (Material m : Material.values()) {
+        // 5. Material.values() must show vanilla and modded content together.
+        //    This is the regression check for the values() call-site rewrite: this
+        //    plugin jar is precompiled against stock paper-api, so the call was
+        //    emitted as a plain invokestatic to org/bukkit/Material.values() and is
+        //    only redirected if CardForge rewrote it at class-load time.
+        Material[] all = Material.values();
+        int moddedInValues = 0;
+        boolean vanillaInValues = false;
+        for (Material m : all) {
             if (m.name().startsWith("WAYSTONES_")) {
-                modded++;
+                moddedInValues++;
+            } else if (m == Material.STONE) {
+                vanillaInValues = true;
             }
         }
-        pass("modded: " + modded + " waystones materials in Material.values() (length "
-                + Material.values().length + ")");
 
-        // If values() disagrees with the backing $VALUES array, the enum extension
-        // wrote the field but values() is not observing it.
+        // Duplicates would mean the extended set was appended to a snapshot that
+        // already contained it - plugins would then see every modded material twice.
+        java.util.Set<Material> unique = new java.util.HashSet<>(java.util.Arrays.asList(all));
+        if (unique.size() != all.length) {
+            fail("values: Material.values() has " + all.length + " entries but only "
+                    + unique.size() + " distinct - duplicates present");
+        } else {
+            pass("values: Material.values() has no duplicates");
+        }
+
+        if (!vanillaInValues) {
+            fail("values: vanilla STONE missing from Material.values() (length " + all.length + ")");
+        } else if (moddedInValues == 0) {
+            fail("values: Material.values() has " + all.length
+                    + " entries but no modded materials - call-site rewrite did not apply");
+        } else {
+            pass("values: Material.values() has " + all.length + " entries, including vanilla"
+                    + " and " + moddedInValues + " waystones materials");
+        }
+
+        // 6. Ordinary lookup must be untouched by the rewrite. Only values() is
+        //    redirected; valueOf, getMaterial and the registries must behave
+        //    exactly as before, for vanilla and modded alike.
         try {
-            Field vf = Material.class.getDeclaredField("$VALUES");
-            vf.setAccessible(true);
-            Material[] backing = (Material[]) vf.get(null);
-            int inBacking = 0;
-            for (Material m : backing) {
-                if (m.name().startsWith("WAYSTONES_")) inBacking++;
+            boolean ok = Material.valueOf("STONE") == Material.STONE
+                    && Material.getMaterial("STONE") == Material.STONE
+                    && Material.matchMaterial("stone") == Material.STONE
+                    && org.bukkit.Registry.MATERIAL.get(NamespacedKey.minecraft("stone")) == Material.STONE
+                    && Material.STONE.getKey().toString().equals("minecraft:stone")
+                    && Material.STONE.isBlock()
+                    && Material.getMaterial("NOT_A_REAL_MATERIAL") == null;
+            if (ok) {
+                pass("values: vanilla lookup unchanged (valueOf, getMaterial, matchMaterial, Registry, getKey, isBlock)");
+            } else {
+                fail("values: vanilla lookup behaviour changed");
             }
-            pass("modded: $VALUES length " + backing.length + ", waystones in it: " + inBacking);
         } catch (Throwable t) {
-            fail("modded: reading $VALUES: " + t);
+            fail("values: vanilla lookup threw " + t);
+        }
+
+        try {
+            boolean ok = Material.valueOf(block.name()) == block
+                    && Material.getMaterial(block.name()) == block;
+            if (ok) {
+                pass("values: modded lookup by name agrees with values()");
+            } else {
+                fail("values: modded lookup by name disagrees with values()");
+            }
+        } catch (Throwable t) {
+            fail("values: modded lookup threw " + t);
         }
     }
 
