@@ -366,18 +366,97 @@ final class CoreProbes implements Listener {
                 this.fail.accept("recipes: recipeIterator produced nothing");
             }
 
-            NamespacedKey key = new NamespacedKey(this.plugin, "probe_recipe");
-            org.bukkit.inventory.ShapedRecipe recipe =
-                    new org.bukkit.inventory.ShapedRecipe(key, new ItemStack(Material.DIAMOND_BLOCK));
-            recipe.shape("DD", "DD");
-            recipe.setIngredient('D', Material.DIAMOND);
-            if (Bukkit.addRecipe(recipe) && Bukkit.getRecipe(key) != null) {
-                this.pass.accept("recipes: registered and looked up a custom recipe");
-            } else {
-                this.fail.accept("recipes: custom recipe did not register");
+            // Add, look up, iterate, and remove - across several recipe kinds, since
+            // each has its own conversion path.
+            addAndCheck("shaped", new org.bukkit.inventory.ShapedRecipe(
+                    new NamespacedKey(this.plugin, "probe_shaped"),
+                    new ItemStack(Material.DIAMOND_BLOCK)) {{
+                shape("DD", "DD");
+                setIngredient('D', Material.DIAMOND);
+            }});
+
+            org.bukkit.inventory.ShapelessRecipe shapeless = new org.bukkit.inventory.ShapelessRecipe(
+                    new NamespacedKey(this.plugin, "probe_shapeless"), new ItemStack(Material.GOLD_BLOCK));
+            shapeless.addIngredient(2, Material.GOLD_INGOT);
+            addAndCheck("shapeless", shapeless);
+
+            addAndCheck("furnace", new org.bukkit.inventory.FurnaceRecipe(
+                    new NamespacedKey(this.plugin, "probe_furnace"),
+                    new ItemStack(Material.IRON_INGOT), Material.IRON_ORE, 0.7F, 200));
+
+            addAndCheck("blasting", new org.bukkit.inventory.BlastingRecipe(
+                    new NamespacedKey(this.plugin, "probe_blasting"),
+                    new ItemStack(Material.GOLD_INGOT), Material.GOLD_ORE, 0.7F, 100));
+
+            addAndCheck("smoking", new org.bukkit.inventory.SmokingRecipe(
+                    new NamespacedKey(this.plugin, "probe_smoking"),
+                    new ItemStack(Material.COOKED_BEEF), Material.BEEF, 0.7F, 100));
+
+            addAndCheck("campfire", new org.bukkit.inventory.CampfireRecipe(
+                    new NamespacedKey(this.plugin, "probe_campfire"),
+                    new ItemStack(Material.COOKED_PORKCHOP), Material.PORKCHOP, 0.7F, 600));
+
+            addAndCheck("stonecutting", new org.bukkit.inventory.StonecuttingRecipe(
+                    new NamespacedKey(this.plugin, "probe_stonecut"),
+                    new ItemStack(Material.STONE_BRICKS), Material.STONE));
+
+            // A duplicate key must be rejected rather than silently shadowing.
+            try {
+                org.bukkit.inventory.ShapelessRecipe dup = new org.bukkit.inventory.ShapelessRecipe(
+                        new NamespacedKey(this.plugin, "probe_dup"), new ItemStack(Material.STICK));
+                dup.addIngredient(Material.OAK_PLANKS);
+                Bukkit.addRecipe(dup);
+                org.bukkit.inventory.ShapelessRecipe dup2 = new org.bukkit.inventory.ShapelessRecipe(
+                        new NamespacedKey(this.plugin, "probe_dup"), new ItemStack(Material.STICK));
+                dup2.addIngredient(Material.OAK_PLANKS);
+                boolean second = Bukkit.addRecipe(dup2);
+                this.fail.accept("recipes: duplicate key was accepted (returned " + second + ")");
+            } catch (IllegalStateException expected) {
+                this.pass.accept("recipes: duplicate key rejected");
+            } finally {
+                Bukkit.removeRecipe(new NamespacedKey(this.plugin, "probe_dup"));
             }
-            Bukkit.removeRecipe(key);
+
+            // Iteration must still work after dynamic additions.
+            int after = 0;
+            java.util.Iterator<Recipe> it2 = Bukkit.recipeIterator();
+            while (it2.hasNext() && after < 5000) {
+                it2.next();
+                after++;
+            }
+            if (after >= count.get()) {
+                this.pass.accept("recipes: recipeIterator still works after additions (" + after + ")");
+            } else {
+                this.fail.accept("recipes: iteration shrank after additions (" + count.get()
+                        + " -> " + after + ")");
+            }
         });
+    }
+
+    /** Adds a recipe, confirms lookup and iteration see it, then removes it. */
+    private void addAndCheck(String kind, Recipe recipe) {
+        NamespacedKey key = ((org.bukkit.Keyed) recipe).getKey();
+        try {
+            if (!Bukkit.addRecipe(recipe)) {
+                this.fail.accept("recipes: addRecipe(" + kind + ") returned false");
+                return;
+            }
+            if (Bukkit.getRecipe(key) == null) {
+                this.fail.accept("recipes: " + kind + " added but getRecipe returned null");
+                return;
+            }
+            if (!Bukkit.removeRecipe(key)) {
+                this.fail.accept("recipes: removeRecipe(" + kind + ") returned false");
+                return;
+            }
+            if (Bukkit.getRecipe(key) != null) {
+                this.fail.accept("recipes: " + kind + " still present after removal");
+                return;
+            }
+            this.pass.accept("recipes: " + kind + " add, lookup and remove");
+        } catch (Throwable t) {
+            this.fail.accept("recipes: " + kind + " threw " + t);
+        }
     }
 
     // ---------- persistent data containers ----------
@@ -452,20 +531,78 @@ final class CoreProbes implements Listener {
             BossBar bar = Bukkit.createBossBar("Probe", BarColor.PURPLE, BarStyle.SEGMENTED_10);
             bar.setProgress(0.5);
             if (Math.abs(bar.getProgress() - 0.5) < 1e-6 && bar.getColor() == BarColor.PURPLE) {
-                this.pass.accept("bossbars: created, progress and colour readable");
+                this.pass.accept("bossbars: unkeyed bar created, progress and colour readable");
             } else {
-                this.fail.accept("bossbars: state did not round-trip");
+                this.fail.accept("bossbars: unkeyed state did not round-trip");
             }
+            bar.removeAll();
 
             NamespacedKey key = new NamespacedKey(this.plugin, "probe_bar");
-            Bukkit.createBossBar(key, "Keyed", BarColor.RED, BarStyle.SOLID);
-            if (Bukkit.getBossBar(key) != null) {
-                this.pass.accept("bossbars: keyed bar registered and retrievable");
-            } else {
-                this.fail.accept("bossbars: keyed bar not found after creation");
-            }
             Bukkit.removeBossBar(key);
-            bar.removeAll();
+
+            org.bukkit.boss.KeyedBossBar keyed =
+                    Bukkit.createBossBar(key, "Keyed", BarColor.RED, BarStyle.SOLID);
+            this.pass.accept("bossbars: created keyed bar " + keyed.getKey());
+
+            org.bukkit.boss.KeyedBossBar found = Bukkit.getBossBar(key);
+            if (found != null && key.equals(found.getKey())) {
+                this.pass.accept("bossbars: retrieved by key");
+            } else {
+                this.fail.accept("bossbars: getBossBar returned " + found);
+            }
+
+            found.setTitle("Renamed");
+            this.pass.accept("bossbars: title now " + found.getTitle());
+
+            found.setProgress(0.25);
+            if (Math.abs(found.getProgress() - 0.25) < 1e-6) {
+                this.pass.accept("bossbars: progress round-tripped");
+            } else {
+                this.fail.accept("bossbars: progress read back " + found.getProgress());
+            }
+
+            found.setColor(BarColor.GREEN);
+            found.setStyle(BarStyle.SEGMENTED_6);
+            if (found.getColor() == BarColor.GREEN && found.getStyle() == BarStyle.SEGMENTED_6) {
+                this.pass.accept("bossbars: colour and style round-tripped");
+            } else {
+                this.fail.accept("bossbars: colour/style read back "
+                        + found.getColor() + "/" + found.getStyle());
+            }
+
+            found.setVisible(false);
+            boolean hidden = !found.isVisible();
+            found.setVisible(true);
+            if (hidden && found.isVisible()) {
+                this.pass.accept("bossbars: visibility toggles");
+            } else {
+                this.fail.accept("bossbars: visibility did not toggle");
+            }
+
+            if (found.getPlayers().isEmpty()) {
+                this.pass.accept("bossbars: player list starts empty");
+            } else {
+                this.fail.accept("bossbars: unexpected players " + found.getPlayers());
+            }
+
+            boolean enumerated = false;
+            java.util.Iterator<org.bukkit.boss.KeyedBossBar> it = Bukkit.getBossBars();
+            while (it.hasNext()) {
+                if (key.equals(it.next().getKey())) {
+                    enumerated = true;
+                }
+            }
+            if (enumerated) {
+                this.pass.accept("bossbars: appears in getBossBars()");
+            } else {
+                this.fail.accept("bossbars: missing from getBossBars()");
+            }
+
+            if (Bukkit.removeBossBar(key) && Bukkit.getBossBar(key) == null) {
+                this.pass.accept("bossbars: removed by key");
+            } else {
+                this.fail.accept("bossbars: removeBossBar did not remove it");
+            }
         });
     }
 
