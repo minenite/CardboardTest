@@ -1,0 +1,9 @@
+name: CardboardTest
+version: 1.0
+main: org.minenite.cbtest.CardboardTest
+api-version: '1.21'
+description: Exercises NMS reflection and custom inventories on Cardboard.
+commands:
+  cbtest:
+    description: Run Cardboard compatibility probes
+    usage: /cbtest <gui|nms|meta|all>

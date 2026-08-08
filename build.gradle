@@ -1,0 +1,10 @@
+plugins { id 'java' }
+repositories {
+    mavenCentral()
+    maven { url = 'https://repo.papermc.io/repository/maven-public/' }
+}
+dependencies {
+    compileOnly 'io.papermc.paper:paper-api:26.2.build.110-stable'
+}
+java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
+tasks.jar { archiveBaseName = 'CardboardTest'; destinationDirectory = file("$rootDir/out") }
