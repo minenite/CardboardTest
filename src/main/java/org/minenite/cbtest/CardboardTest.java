@@ -53,6 +53,12 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
         // console. That matters because it lets the whole mod-compatibility check
         // run in an automated boot test, with no client attached.
         if (!(sender instanceof Player player)) {
+            if (mode.equals("damage")) {
+                // Isolated on purpose: nothing else spawns or removes entities.
+                new DamageProbe(this).run();
+                sender.sendMessage("damage probe started; results follow in the log");
+                return true;
+            }
             if (mode.equals("mods") || mode.equals("core") || mode.equals("auto")) {
                 this.results.clear();
                 if (!mode.equals("core")) {
