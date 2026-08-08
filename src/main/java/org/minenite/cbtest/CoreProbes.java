@@ -79,9 +79,14 @@ final class CoreProbes implements Listener {
             this.configuration();
             this.registries();
             this.worldSave(world);
-        } finally {
+        } catch (Throwable t) {
+            this.fail.accept("core: " + t);
             HandlerList.unregisterAll(this);
+            return;
         }
+        // Deliberately not unregistered here: the deferred entity checks run a
+        // couple of ticks later and need these listeners still attached to observe
+        // EntityDamageEvent and EntityDeathEvent. entitiesDeferred does it instead.
     }
 
     private void probe(String name, Runnable body) {
@@ -170,43 +175,72 @@ final class CoreProbes implements Listener {
             }
             this.pass.accept("entities: spawned " + zombie.getType() + " (" + zombie.getUniqueId() + ")");
 
-            // Teleportation.
-            Location moved = at.clone().add(0, 0, 2);
-            if (zombie.teleport(moved) && zombie.getLocation().distance(moved) < 1.0) {
-                this.pass.accept("entities: teleport moved the entity");
-            } else {
-                this.fail.accept("entities: teleport did not take effect");
+            // Everything past this point has to wait a tick.
+            //
+            // An entity spawned earlier in the same tick is registered but has not
+            // been ticked yet, and acting on it immediately does not behave the way
+            // it does in play: teleport does not stick and the damage events do not
+            // dispatch. An earlier version of this probe did exactly that and
+            // reported three failures that turned out to be artefacts of the test,
+            // not defects - real players taking damage and dying fire both events
+            // correctly. Measuring an entity in a state no plugin encounters is
+            // worse than not measuring it, because it produces false failures that
+            // get written down as known issues.
+            Bukkit.getScheduler().runTaskLater(this.plugin, () -> this.entitiesDeferred(zombie), 2L);
+        });
+    }
+
+    /** The parts of the entity probe that need the entity to be live. */
+    private void entitiesDeferred(Zombie zombie) {
+        // Runs after the synchronous report, so these log themselves.
+        java.util.List<String> out = new java.util.ArrayList<>();
+        try {
+            // Report the components separately rather than bailing on a combined
+            // condition: "vanished" told us nothing about which of the three was
+            // false, and isValid() in particular depends on CardForge's own
+            // tracking flag rather than on the entity being alive.
+            out.add("[INFO] entities: after 2 ticks dead=" + zombie.isDead()
+                    + " valid=" + zombie.isValid()
+                    + " health=" + zombie.getHealth());
+            if (zombie.isDead()) {
+                out.add("[FAIL] entities: zombie died before the deferred checks could run");
+                this.emit(out);
+                HandlerList.unregisterAll(this);
+                return;
             }
 
-            // Damage, which must dispatch EntityDamageEvent.
+            Location moved = zombie.getLocation().clone().add(0, 0, 2);
+            if (zombie.teleport(moved) && zombie.getLocation().distance(moved) < 1.0) {
+                out.add("[PASS] entities: teleport moved the entity");
+            } else {
+                out.add("[FAIL] entities: teleport did not take effect");
+            }
+
             this.sawDamage = false;
             double before = zombie.getHealth();
             zombie.damage(4.0);
             if (zombie.getHealth() < before) {
-                this.pass.accept("entities: damage applied (" + before + " -> " + zombie.getHealth() + ")");
+                out.add("[PASS] entities: damage applied (" + before + " -> " + zombie.getHealth() + ")");
             } else {
-                this.fail.accept("entities: damage did not reduce health");
+                out.add("[FAIL] entities: damage did not reduce health");
             }
-            if (this.sawDamage) {
-                this.pass.accept("entities: EntityDamageEvent fired");
-            } else {
-                this.fail.accept("entities: EntityDamageEvent did not fire");
-            }
+            out.add((this.sawDamage ? "[PASS]" : "[FAIL]") + " entities: EntityDamageEvent fired");
 
-            // Death, which must dispatch EntityDeathEvent.
             this.sawDeath = false;
             zombie.setHealth(0.0);
-            if (this.sawDeath) {
-                this.pass.accept("entities: EntityDeathEvent fired");
-            } else {
-                this.fail.accept("entities: EntityDeathEvent did not fire");
-            }
-            if (zombie.isDead()) {
-                this.pass.accept("entities: entity is dead after setHealth(0)");
-            } else {
-                this.fail.accept("entities: entity still alive after setHealth(0)");
-            }
-        });
+            out.add((this.sawDeath ? "[PASS]" : "[FAIL]") + " entities: EntityDeathEvent fired");
+            out.add((zombie.isDead() ? "[PASS]" : "[FAIL]") + " entities: dead after setHealth(0)");
+        } catch (Throwable t) {
+            out.add("[FAIL] entities (deferred): " + t);
+        }
+        this.emit(out);
+        HandlerList.unregisterAll(this);
+    }
+
+    private void emit(java.util.List<String> lines) {
+        for (String line : lines) {
+            this.plugin.getLogger().info(line);
+        }
     }
 
     @EventHandler
