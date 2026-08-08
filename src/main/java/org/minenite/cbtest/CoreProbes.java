@@ -94,6 +94,9 @@ final class CoreProbes implements Listener {
             body.run();
         } catch (Throwable t) {
             this.fail.accept(name + ": " + t);
+            // The message alone has repeatedly not been enough to locate a fault -
+            // a cast error names the types but not the line that performs it.
+            t.printStackTrace();
         }
     }
 
@@ -173,6 +176,11 @@ final class CoreProbes implements Listener {
                 this.fail.accept("entities: spawnEntity did not return a Zombie");
                 return;
             }
+            // Keep it alive. The automated suite runs with nobody online, and a
+            // hostile mob with no player nearby is despawned - which is what killed
+            // the previous run's zombie with no damage event to explain it.
+            zombie.setRemoveWhenFarAway(false);
+            zombie.setPersistent(true);
             this.pass.accept("entities: spawned " + zombie.getType() + " (" + zombie.getUniqueId() + ")");
 
             // Everything past this point has to wait a tick.
@@ -186,7 +194,7 @@ final class CoreProbes implements Listener {
             // correctly. Measuring an entity in a state no plugin encounters is
             // worse than not measuring it, because it produces false failures that
             // get written down as known issues.
-            Bukkit.getScheduler().runTaskLater(this.plugin, () -> this.entitiesDeferred(zombie), 40L);
+            Bukkit.getScheduler().runTaskLater(this.plugin, () -> this.entitiesDeferred(zombie), 10L);
         });
     }
 
@@ -199,11 +207,12 @@ final class CoreProbes implements Listener {
             // condition: "vanished" told us nothing about which of the three was
             // false, and isValid() in particular depends on CardForge's own
             // tracking flag rather than on the entity being alive.
-            out.add("[INFO] entities: after 40 ticks dead=" + zombie.isDead()
+            out.add("[INFO] entities: after 10 ticks dead=" + zombie.isDead()
                     + " valid=" + zombie.isValid()
                     + " health=" + zombie.getHealth());
             if (zombie.isDead()) {
-                out.add("[FAIL] entities: zombie died before the deferred checks could run");
+                out.add("[FAIL] entities: zombie died before the deferred checks could run;"
+                        + " damage events seen: " + this.damageLog);
                 this.emit(out);
                 HandlerList.unregisterAll(this);
                 return;
@@ -215,6 +224,21 @@ final class CoreProbes implements Listener {
             } else {
                 out.add("[FAIL] entities: teleport did not take effect");
             }
+
+            // Cancellation first: a plugin cancelling EntityDamageEvent must stop
+            // the damage reaching the entity at all. This is the half of the
+            // contract that matters most and the half a "did the event fire" check
+            // does not cover.
+            this.cancelDamageFor = zombie.getUniqueId();
+            double beforeCancel = zombie.getHealth();
+            zombie.damage(6.0);
+            if (zombie.getHealth() == beforeCancel) {
+                out.add("[PASS] entities: cancelling EntityDamageEvent prevented the damage");
+            } else {
+                out.add("[FAIL] entities: cancelled damage still applied ("
+                        + beforeCancel + " -> " + zombie.getHealth() + ")");
+            }
+            this.cancelDamageFor = null;
 
             this.sawDamage = false;
             double before = zombie.getHealth();
@@ -230,6 +254,7 @@ final class CoreProbes implements Listener {
             zombie.setHealth(0.0);
             out.add((this.sawDeath ? "[PASS]" : "[FAIL]") + " entities: EntityDeathEvent fired");
             out.add((zombie.isDead() ? "[PASS]" : "[FAIL]") + " entities: dead after setHealth(0)");
+            out.add("[INFO] entities: damage events seen: " + this.damageLog);
         } catch (Throwable t) {
             out.add("[FAIL] entities (deferred): " + t);
         }
@@ -243,9 +268,20 @@ final class CoreProbes implements Listener {
         }
     }
 
+    /** Every damage event seen, so an unexplained death names its own cause. */
+    private final java.util.List<String> damageLog =
+            java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+    /** When set, the listener cancels damage to this entity, to test cancellation. */
+    private volatile java.util.UUID cancelDamageFor;
+
     @EventHandler
     public void onDamage(EntityDamageEvent event) {
         this.sawDamage = true;
+        this.damageLog.add(event.getEntity().getType() + "/" + event.getCause() + "/" + event.getDamage());
+        if (event.getEntity().getUniqueId().equals(this.cancelDamageFor)) {
+            event.setCancelled(true);
+        }
     }
 
     @EventHandler
