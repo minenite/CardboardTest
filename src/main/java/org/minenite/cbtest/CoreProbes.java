@@ -49,15 +49,27 @@ final class CoreProbes implements Listener {
     private final Consumer<String> pass;
     private final Consumer<String> fail;
 
+    /** The entity probe's subject, watched across later probes to find interference. */
+    private LivingEntity watched;
+    private String removedBy;
+
     // Set by the listeners below, to prove events actually dispatched.
     private volatile boolean sawDamage;
     private volatile boolean sawDeath;
     private volatile boolean sawBreak;
 
+    /** Probe names to skip, for bisecting cross-probe interference. */
+    private java.util.Set<String> skip = java.util.Set.of();
+
     CoreProbes(Plugin plugin, Consumer<String> pass, Consumer<String> fail) {
         this.plugin = plugin;
         this.pass = pass;
         this.fail = fail;
+    }
+
+    CoreProbes skipping(java.util.Set<String> skip) {
+        this.skip = skip;
+        return this;
     }
 
     void runAll() {
@@ -67,18 +79,21 @@ final class CoreProbes implements Listener {
             this.worlds(world);
             this.blocks(world);
             this.entities(world);
-            this.projectiles(world);
-            this.itemStacks();
-            this.recipes();
-            this.pdc(world);
-            this.scoreboards();
-            this.bossBars();
-            this.scheduler();
-            this.permissions();
-            this.commands();
-            this.configuration();
-            this.registries();
-            this.worldSave(world);
+            // After this point the entity probe's subject must survive until its
+            // deferred checks run. Each step is followed by a liveness check so an
+            // interfering probe names itself instead of being guessed at.
+            if (!this.skip.contains("projectiles")) this.projectiles(world);      afterProbe("projectiles");
+            if (!this.skip.contains("itemStacks")) this.itemStacks();            afterProbe("itemStacks");
+            if (!this.skip.contains("recipes")) this.recipes();               afterProbe("recipes");
+            if (!this.skip.contains("pdc")) this.pdc(world);              afterProbe("pdc");
+            if (!this.skip.contains("scoreboards")) this.scoreboards();           afterProbe("scoreboards");
+            if (!this.skip.contains("bossBars")) this.bossBars();              afterProbe("bossBars");
+            if (!this.skip.contains("scheduler")) this.scheduler();             afterProbe("scheduler");
+            if (!this.skip.contains("permissions")) this.permissions();           afterProbe("permissions");
+            if (!this.skip.contains("commands")) this.commands();              afterProbe("commands");
+            if (!this.skip.contains("configuration")) this.configuration();         afterProbe("configuration");
+            if (!this.skip.contains("registries")) this.registries();            afterProbe("registries");
+            if (!this.skip.contains("worldSave")) this.worldSave(world);        afterProbe("worldSave");
         } catch (Throwable t) {
             this.fail.accept("core: " + t);
             HandlerList.unregisterAll(this);
@@ -87,6 +102,18 @@ final class CoreProbes implements Listener {
         // Deliberately not unregistered here: the deferred entity checks run a
         // couple of ticks later and need these listeners still attached to observe
         // EntityDamageEvent and EntityDeathEvent. entitiesDeferred does it instead.
+    }
+
+    /** Records the first probe after which the watched subject stopped being alive. */
+    private void afterProbe(String name) {
+        if (this.watched == null || this.removedBy != null) {
+            return;
+        }
+        if (this.watched.isDead() || !this.watched.isValid()) {
+            this.removedBy = name;
+            this.fail.accept("entities: subject stopped being alive during '" + name
+                    + "' (dead=" + this.watched.isDead() + " valid=" + this.watched.isValid() + ")");
+        }
     }
 
     private void probe(String name, Runnable body) {
@@ -169,7 +196,7 @@ final class CoreProbes implements Listener {
 
     private void entities(World world) {
         probe("entities", () -> {
-            Location at = world.getSpawnLocation().clone().add(0, 1, 5);
+            Location at = world.getSpawnLocation().clone().add(0, 1, 20);
 
             // A passive mob on purpose. A hostile one despawns when no player is
             // nearby, and the automated suite runs with nobody online - which made
@@ -186,6 +213,7 @@ final class CoreProbes implements Listener {
             // the previous run's zombie with no damage event to explain it.
             zombie.setRemoveWhenFarAway(false);
             zombie.setPersistent(true);
+            this.watched = zombie;
             this.pass.accept("entities: spawned " + zombie.getType() + " (" + zombie.getUniqueId() + ")");
 
             // Everything past this point has to wait a tick.

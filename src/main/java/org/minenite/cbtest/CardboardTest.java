@@ -69,7 +69,10 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
                     this.probeModdedContent(null);
                 }
                 if (!mode.equals("mods")) {
-                    new CoreProbes(this, this::pass, this::fail).runAll();
+                    java.util.Set<String> skip = args.length > 1
+                            ? java.util.Set.of(args[1].split(","))
+                            : java.util.Set.of();
+                    new CoreProbes(this, this::pass, this::fail).skipping(skip).runAll();
                 }
                 this.report(sender);
                 return true;
