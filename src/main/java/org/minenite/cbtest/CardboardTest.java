@@ -53,6 +53,13 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
         // console. That matters because it lets the whole mod-compatibility check
         // run in an automated boot test, with no client attached.
         if (!(sender instanceof Player player)) {
+            if (mode.equals("guard")) {
+                boolean armed = GuardProbe.toggle(this);
+                sender.sendMessage(armed
+                        ? "GUARD ARMED - placement, breaking, interaction and damage will be cancelled"
+                        : "GUARD DISARMED");
+                return true;
+            }
             if (mode.equals("item")) {
                 new ItemStackProbe(this).run();
                 return true;
@@ -78,6 +85,12 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
                 return true;
             }
             sender.sendMessage("CardboardTest: from the console use 'mods', 'core' or 'auto'.");
+            return true;
+        }
+
+        if (mode.equals("guard")) {
+            boolean armed = GuardProbe.toggle(this);
+            player.sendMessage(armed ? "GUARD ARMED" : "GUARD DISARMED");
             return true;
         }
 
