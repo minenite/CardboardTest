@@ -53,13 +53,18 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
         // console. That matters because it lets the whole mod-compatibility check
         // run in an automated boot test, with no client attached.
         if (!(sender instanceof Player player)) {
-            if (mode.equals("mods")) {
+            if (mode.equals("mods") || mode.equals("core") || mode.equals("auto")) {
                 this.results.clear();
-                this.probeModdedContent(null);
+                if (!mode.equals("core")) {
+                    this.probeModdedContent(null);
+                }
+                if (!mode.equals("mods")) {
+                    new CoreProbes(this, this::pass, this::fail).runAll();
+                }
                 this.report(sender);
                 return true;
             }
-            sender.sendMessage("CardboardTest: only 'mods' can run from the console.");
+            sender.sendMessage("CardboardTest: from the console use 'mods', 'core' or 'auto'.");
             return true;
         }
 
