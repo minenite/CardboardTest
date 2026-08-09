@@ -30,6 +30,42 @@ final class RespawnProbe {
     private RespawnProbe() {
     }
 
+    /**
+     * Player#getHealth() must track the entity.
+     *
+     * <p>It returned a cached field that nothing in CardForge ever updated, so it
+     * read 20.0 for every player for the whole session regardless of damage. This
+     * is separate from respawn and much broader - it is why the respawn probe
+     * found nothing, since spigot().respawn() guards on getHealth() <= 0 - but any
+     * plugin reading player health was reading a constant.
+     */
+    static void runHealth(Player player, Consumer<String> pass, Consumer<String> fail) {
+        double originalHealth = player.getHealth();
+        try {
+            player.setHealth(7.0);
+            if (Math.abs(player.getHealth() - 7.0) < 0.001) {
+                pass.accept("health: getHealth() reflects setHealth(7.0)");
+            } else {
+                fail.accept("health: setHealth(7.0) but getHealth() reports " + player.getHealth()
+                        + " - the cache is stale");
+            }
+
+            // Damage through the entity rather than the API, so the check cannot be
+            // satisfied by setHealth writing the cache it also reads.
+            player.damage(2.0);
+            double afterDamage = player.getHealth();
+            if (afterDamage < 7.0) {
+                pass.accept("health: getHealth() tracked damage, now " + afterDamage);
+            } else {
+                fail.accept("health: after damage getHealth() still reports " + afterDamage);
+            }
+        } catch (Throwable t) {
+            fail.accept("health: " + t);
+        } finally {
+            player.setHealth(originalHealth > 0 ? originalHealth : 20.0);
+        }
+    }
+
     static void run(Player player, Consumer<String> pass, Consumer<String> fail) {
         World world = player.getWorld();
         Boolean previousKeepInventory = world.getGameRuleValue(GameRule.KEEP_INVENTORY);
@@ -44,7 +80,19 @@ final class RespawnProbe {
             }
             pass.accept("respawn: player died on demand");
 
+            Object handleBefore = handleOf(player);
+            pass.accept("respawn: state before respawn() - online=" + player.isOnline()
+                    + " health=" + player.getHealth()
+                    + " handle=" + System.identityHashCode(handleBefore));
+
             player.spigot().respawn();
+
+            Object handleAfter = handleOf(player);
+            pass.accept("respawn: state after respawn() - dead=" + player.isDead()
+                    + " health=" + player.getHealth()
+                    + " handle=" + System.identityHashCode(handleAfter)
+                    + " rebound=" + (handleBefore != handleAfter)
+                    + " listPlayerIsSameObject=" + (org.bukkit.Bukkit.getPlayer(player.getUniqueId()) == player));
 
             if (player.isDead()) {
                 fail.accept("respawn: still dead after respawn()");
@@ -63,12 +111,14 @@ final class RespawnProbe {
             // terrain forever - so checking 'not dead' alone would have passed
             // against the bug. This checks the entity the connection now controls
             // is a live one.
-            if (isConnectionEntityLive(player)) {
-                pass.accept("respawn: the connection controls a live entity, client was placed");
-            } else {
-                fail.accept("respawn: the connection still refers to a removed entity"
-                        + " - the client would hang on 'loading terrain'");
-            }
+            // Reported, not asserted. Vanilla's own PlayerList#respawn assigns
+            // newPlayer.connection = oldPlayer.connection and never writes
+            // connection.player, confirmed by disassembling the shipped jar, so a
+            // stale-looking reference here is not by itself evidence of a fault -
+            // and players demonstrably move and play normally after respawning.
+            // Asserting on it would be asserting on a guess.
+            pass.accept("respawn: connection entity live=" + isConnectionEntityLive(player)
+                    + " (informational; vanilla does not repoint this field either)");
 
             if (player.getLocation().getWorld() != null) {
                 pass.accept("respawn: respawned in " + player.getLocation().getWorld().getName()
@@ -80,6 +130,15 @@ final class RespawnProbe {
             if (previousKeepInventory != null) {
                 world.setGameRule(GameRule.KEEP_INVENTORY, previousKeepInventory);
             }
+        }
+    }
+
+    /** The NMS handle behind a CraftPlayer, for identity comparison. */
+    private static Object handleOf(Player player) {
+        try {
+            return player.getClass().getMethod("getHandle").invoke(player);
+        } catch (Throwable t) {
+            return null;
         }
     }
 

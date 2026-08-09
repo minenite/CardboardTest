@@ -56,6 +56,7 @@ final class CoreProbes implements Listener {
     // Set by the listeners below, to prove events actually dispatched.
     private volatile boolean sawDamage;
     private volatile boolean sawDeath;
+    private volatile int deathDrops = -1;
     private volatile boolean sawBreak;
 
     /** Probe names to skip, for bisecting cross-probe interference. */
@@ -284,8 +285,14 @@ final class CoreProbes implements Listener {
             out.add((this.sawDamage ? "[PASS]" : "[FAIL]") + " entities: EntityDamageEvent fired");
 
             this.sawDeath = false;
+            this.deathDrops = -1;
             zombie.setHealth(0.0);
             out.add((this.sawDeath ? "[PASS]" : "[FAIL]") + " entities: EntityDeathEvent fired");
+            if (this.sawDeath) {
+                out.add((this.deathDrops > 0 ? "[PASS]" : "[FAIL]")
+                        + " entities: EntityDeathEvent#getDrops() carried " + this.deathDrops
+                        + " stack(s) - a plugin can only modify drops it can see");
+            }
             out.add((zombie.isDead() ? "[PASS]" : "[FAIL]") + " entities: dead after setHealth(0)");
             out.add("[INFO] entities: damage events seen: " + this.damageLog);
         } catch (Throwable t) {
@@ -320,6 +327,13 @@ final class CoreProbes implements Listener {
     @EventHandler
     public void onDeath(EntityDeathEvent event) {
         this.sawDeath = true;
+        // NeoForge wraps dropAllDeathLoot in captureDrops, and its spawnAtLocation
+        // adds to that capture instead of calling addFreshEntity - which is the
+        // call Cardboard redirects to collect this list. If the redirect is being
+        // bypassed, drops still appear in the world (NeoForge adds them itself)
+        // while getDrops() is empty, so no plugin can modify mob drops and nothing
+        // looks wrong from in game.
+        this.deathDrops = event.getDrops() == null ? -1 : event.getDrops().size();
     }
 
     // ---------- projectiles ----------
