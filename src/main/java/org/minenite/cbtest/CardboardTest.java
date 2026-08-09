@@ -80,6 +80,16 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
                             ? java.util.Set.of(args[1].split(","))
                             : java.util.Set.of();
                     new CoreProbes(this, this::pass, this::fail).skipping(skip).runAll();
+
+                    // These used to run only when a human typed the command in game,
+                    // so the automated suite reported green on a category it had
+                    // never executed. They now run from the console too, against any
+                    // player who happens to be online, and report [SKIP] when there
+                    // is none instead of vanishing from the results.
+                    Player online = anyOnlinePlayer();
+                    this.probeNms(online);
+                    this.probeItemMeta(online);
+                    this.openGui(online);
                 }
                 this.report(sender);
                 return true;
@@ -117,16 +127,41 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
         return true;
     }
 
-    private void report(CommandSender sender) {
-        for (String line : this.results) {
-            sender.sendMessage(line);
-            getLogger().info(ChatColor.stripColor(line));
+    /** The first online player, or null. Lets a console run cover the player paths. */
+    private Player anyOnlinePlayer() {
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            return p;
         }
+        return null;
+    }
+
+    private void report(CommandSender sender) {
+        int passes = 0;
+        int fails = 0;
+        int skips = 0;
+        for (String line : this.results) {
+            String plain = ChatColor.stripColor(line);
+            if (plain.startsWith("[PASS]")) passes++;
+            else if (plain.startsWith("[FAIL]")) fails++;
+            else if (plain.startsWith("[SKIP]")) skips++;
+            sender.sendMessage(line);
+            getLogger().info(plain);
+        }
+
+        // The totals line is what the harness reads. It carries the skip count so a
+        // run that never exercised a category cannot be mistaken for a clean one.
+        String summary = "SUMMARY: " + passes + " passed, " + fails + " failed, " + skips + " skipped";
+        sender.sendMessage(fails > 0 ? ChatColor.RED + summary : ChatColor.GREEN + summary);
+        getLogger().info(summary);
     }
 
     // ---------- custom inventory ----------
 
     private void openGui(Player player) {
+        if (player == null) {
+            skip("gui: opening an inventory needs a player online");
+            return;
+        }
         try {
             Inventory inv = Bukkit.createInventory(null, 27, GUI_TITLE);
 
@@ -172,8 +207,12 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
                 fail("item meta: name=" + name + " lore=" + lore);
             }
 
-            player.getInventory().addItem(stack);
-            pass("item meta: added the probe item to the player inventory");
+            if (player == null) {
+                skip("item meta: adding to a player inventory needs a player online");
+            } else {
+                player.getInventory().addItem(stack);
+                pass("item meta: added the probe item to the player inventory");
+            }
         } catch (Throwable t) {
             failWith("item meta: " + t, t);
         }
@@ -391,18 +430,30 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
 
     // ---------- NMS reflection ----------
 
+    /**
+     * @param player may be null when run from the console. The parts that genuinely
+     *               need a player report [SKIP] with a reason rather than being
+     *               silently absent - an omitted probe reads as a green run.
+     */
     private void probeNms(Player player) {
         // 1. CraftPlayer#getHandle via reflection - the classic NMS entry point
         Object handle = null;
-        try {
-            Method getHandle = player.getClass().getMethod("getHandle");
-            handle = getHandle.invoke(player);
-            pass("nms: CraftPlayer#getHandle -> " + handle.getClass().getName());
-        } catch (Throwable t) {
-            failWith("nms: getHandle failed: " + t, t);
+        if (player == null) {
+            skip("nms: CraftPlayer#getHandle needs a player online");
+        } else {
+            try {
+                Method getHandle = player.getClass().getMethod("getHandle");
+                handle = getHandle.invoke(player);
+                pass("nms: CraftPlayer#getHandle -> " + handle.getClass().getName());
+            } catch (Throwable t) {
+                failWith("nms: getHandle failed: " + t, t);
+            }
         }
 
         // 2. Walk to a known NMS field on the handle
+        if (handle == null && player == null) {
+            skip("nms: ServerPlayer#connection needs a player online");
+        }
         if (handle != null) {
             try {
                 Field connection = findField(handle.getClass(), "connection");
@@ -431,13 +482,21 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             fail("nms: Class.forName ServerLevel: " + t);
         }
 
-        // 5. CraftWorld#getHandle, the world-side equivalent of getHandle
-        try {
-            Method getHandle = player.getWorld().getClass().getMethod("getHandle");
-            Object nmsWorld = getHandle.invoke(player.getWorld());
-            pass("nms: CraftWorld#getHandle -> " + nmsWorld.getClass().getSimpleName());
-        } catch (Throwable t) {
-            failWith("nms: CraftWorld#getHandle: " + t, t);
+        // 5. CraftWorld#getHandle, the world-side equivalent of getHandle. This one
+        // only ever needed a world, and the server always has one - taking it from
+        // the player was why the whole probe was gated behind being in game.
+        org.bukkit.World world = player != null ? player.getWorld()
+                : (Bukkit.getWorlds().isEmpty() ? null : Bukkit.getWorlds().get(0));
+        if (world == null) {
+            skip("nms: CraftWorld#getHandle - no worlds loaded");
+        } else {
+            try {
+                Method getHandle = world.getClass().getMethod("getHandle");
+                Object nmsWorld = getHandle.invoke(world);
+                pass("nms: CraftWorld#getHandle -> " + nmsWorld.getClass().getSimpleName());
+            } catch (Throwable t) {
+                failWith("nms: CraftWorld#getHandle: " + t, t);
+            }
         }
     }
 
