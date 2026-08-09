@@ -39,6 +39,52 @@ final class PermProbe {
             out.add("[INFO] perm: nameAndId reflection failed: " + t);
         }
         out.add("[INFO] perm: hasPermission(missing)=" + player.hasPermission(missing));
+
+        // The op field on CraftHumanEntity was never seeded from the op list, so a
+        // player listed in ops.json read as not-op through the Bukkit API until
+        // something called setOp. PermissibleBase resolves an unset permission from
+        // isOp(), so every plugin permission defaulting to op was denied - quietly,
+        // because "denied" is a normal answer. Vanilla commands kept working, which
+        // is what made the two disagree and hid it.
+        boolean listOp = false;
+        try {
+            Object handle = player.getClass().getMethod("getHandle").invoke(player);
+            Object nameAndId = handle.getClass().getMethod("nameAndId").invoke(handle);
+            Object playerList = org.bukkit.Bukkit.getServer().getClass()
+                    .getMethod("getHandle").invoke(org.bukkit.Bukkit.getServer());
+            for (java.lang.reflect.Method m : playerList.getClass().getMethods()) {
+                if (m.getName().equals("isOp") && m.getParameterCount() == 1) {
+                    listOp = (Boolean) m.invoke(playerList, nameAndId);
+                    break;
+                }
+            }
+        } catch (Throwable t) {
+            out.add("[INFO] perm: could not read the server op list: " + t);
+        }
+        if (player.isOp() == listOp) {
+            out.add("[PASS] perm: Player#isOp() agrees with the server op list (" + listOp + ")");
+        } else {
+            out.add("[FAIL] perm: Player#isOp()=" + player.isOp()
+                    + " but the server op list says " + listOp
+                    + " - every op-default plugin permission is resolving wrongly");
+        }
+
+        // An op must resolve a permission that defaults to op. Registered here so
+        // the check does not depend on any particular plugin being installed.
+        String opDefault = "cardboardtest.opdefault";
+        if (org.bukkit.Bukkit.getPluginManager().getPermission(opDefault) == null) {
+            org.bukkit.Bukkit.getPluginManager().addPermission(
+                    new org.bukkit.permissions.Permission(opDefault,
+                            org.bukkit.permissions.PermissionDefault.OP));
+        }
+        player.recalculatePermissions();
+        boolean got = player.hasPermission(opDefault);
+        if (got == listOp) {
+            out.add("[PASS] perm: an op-default permission resolves to " + got + " for this player");
+        } else {
+            out.add("[FAIL] perm: op-default permission resolved " + got
+                    + " but the player's op state is " + listOp);
+        }
         out.add("[INFO] perm: isPermissionSet(missing)=" + player.isPermissionSet(missing));
         out.add("[INFO] perm: getPluginManager().getPermission(missing)="
                 + Bukkit.getPluginManager().getPermission(missing));
