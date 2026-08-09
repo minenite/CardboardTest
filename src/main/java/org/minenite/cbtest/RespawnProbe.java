@@ -41,7 +41,17 @@ final class RespawnProbe {
      */
     static void runHealth(Player player, Consumer<String> pass, Consumer<String> fail) {
         double originalHealth = player.getHealth();
+        org.bukkit.GameMode mode = player.getGameMode();
+        int noDamage = player.getNoDamageTicks();
         try {
+            // Two invisible states make damage() a no-op and this probe flaky: a
+            // creative player takes none at all, and the invulnerability frames
+            // left by the setHealth above swallow the next hit within 10 ticks.
+            // A test whose result depends on state the reader cannot see is worse
+            // than no test.
+            if (mode != org.bukkit.GameMode.SURVIVAL) {
+                player.setGameMode(org.bukkit.GameMode.SURVIVAL);
+            }
             player.setHealth(7.0);
             if (Math.abs(player.getHealth() - 7.0) < 0.001) {
                 pass.accept("health: getHealth() reflects setHealth(7.0)");
@@ -52,17 +62,22 @@ final class RespawnProbe {
 
             // Damage through the entity rather than the API, so the check cannot be
             // satisfied by setHealth writing the cache it also reads.
+            player.setNoDamageTicks(0);
             player.damage(2.0);
             double afterDamage = player.getHealth();
             if (afterDamage < 7.0) {
                 pass.accept("health: getHealth() tracked damage, now " + afterDamage);
             } else {
-                fail.accept("health: after damage getHealth() still reports " + afterDamage);
+                fail.accept("health: after damage getHealth() still reports " + afterDamage
+                        + " (mode=" + player.getGameMode() + ", noDamageTicks="
+                        + player.getNoDamageTicks() + ")");
             }
         } catch (Throwable t) {
             fail.accept("health: " + t);
         } finally {
             player.setHealth(originalHealth > 0 ? originalHealth : 20.0);
+            player.setNoDamageTicks(noDamage);
+            player.setGameMode(mode);
         }
     }
 

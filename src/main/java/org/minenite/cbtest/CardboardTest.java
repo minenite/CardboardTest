@@ -120,6 +120,7 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             // Opt-in only: it kills the player for real. Not in 'all'.
             case "respawn" -> RespawnProbe.run(player, this::pass, this::fail);
             case "health" -> RespawnProbe.runHealth(player, this::pass, this::fail);
+            case "give" -> this.probeGive(player);
             default -> {
                 this.probeNms(player);
                 this.probeItemMeta(player);
@@ -142,6 +143,47 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
         }
         BreakProbe.run(this, player, this::pass, this::fail);
         BreakProbe.runItemDamage(this, player, this::pass, this::fail);
+    }
+
+    /**
+     * Adds an item through the Bukkit API and reads it back.
+     *
+     * <p>EssentialsX /i resolves the item correctly - its database returns STONE -
+     * and then calls Inventory#addItem, after which nothing appears. This
+     * separates the two possible causes: the write not landing in the real
+     * inventory at all, or landing there but never being sent to the client.
+     */
+    private void probeGive(Player player) {
+        if (player == null) {
+            skip("give: needs a player online");
+            return;
+        }
+        int before = count(player, Material.STONE);
+        java.util.Map<Integer, ItemStack> leftover =
+                player.getInventory().addItem(new ItemStack(Material.STONE, 5));
+        int after = count(player, Material.STONE);
+
+        pass("give: stone before=" + before + " after=" + after + " leftover=" + leftover.size());
+        if (after == before + 5) {
+            pass("give: addItem reached the server-side inventory");
+        } else {
+            fail("give: addItem did not reach the inventory (expected " + (before + 5) + ", got " + after + ")");
+        }
+
+        // If the server-side count is right but the client shows nothing, the
+        // inventory is simply never synced - which is what this call fixes.
+        player.updateInventory();
+        pass("give: called updateInventory(); check whether 5 stone is now visible in game");
+    }
+
+    private int count(Player player, Material material) {
+        int n = 0;
+        for (ItemStack stack : player.getInventory().getContents()) {
+            if (stack != null && stack.getType() == material) {
+                n += stack.getAmount();
+            }
+        }
+        return n;
     }
 
     /** The first online player, or null. Lets a console run cover the player paths. */
