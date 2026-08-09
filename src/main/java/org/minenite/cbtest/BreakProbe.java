@@ -49,8 +49,15 @@ final class BreakProbe implements Listener {
         Location at = player.getLocation().add(0, 3, 2).getBlock().getLocation();
         Block block = at.getBlock();
         Material original = block.getType();
+        // Spectator and adventure make NeoForge pre-cancel the break, which is a
+        // different path; it gets its own check below. The main assertions need a
+        // mode where a break is actually allowed.
+        org.bukkit.GameMode mode = player.getGameMode();
         try {
             plugin.getServer().getPluginManager().registerEvents(probe, plugin);
+            if (mode != org.bukkit.GameMode.SURVIVAL) {
+                player.setGameMode(org.bukkit.GameMode.SURVIVAL);
+            }
 
             // 1. An uncancelled break: exactly one event, and the block goes.
             block.setType(Material.STONE);
@@ -84,11 +91,34 @@ final class BreakProbe implements Listener {
                 fail.accept("blockbreak: cancellation not honoured - destroyBlock returned " + second
                         + ", block is " + block.getType());
             }
+            // 3. A break NeoForge pre-cancels - here by putting the player in
+            // spectator, which trips blockActionRestricted. NeoForge posts the event
+            // already cancelled, and a listener that does not opt into cancelled
+            // events never runs, so the Bukkit event would silently not fire at all.
+            // Paper fires it cancelled and lets a plugin overturn it, so this is the
+            // regression test for that difference.
+            block.setType(Material.STONE);
+            probe.fired = 0;
+            probe.cancelNext = false;
+            player.setGameMode(org.bukkit.GameMode.SPECTATOR);
+            destroyBlock(player, block);
+            if (probe.fired == 1) {
+                pass.accept("blockbreak: a NeoForge pre-cancelled break still notifies plugins");
+            } else {
+                fail.accept("blockbreak: pre-cancelled break fired " + probe.fired
+                        + " events, expected 1 - listener is not receiving cancelled events");
+            }
+            if (block.getType() == Material.STONE) {
+                pass.accept("blockbreak: pre-cancelled break left the block intact");
+            } else {
+                fail.accept("blockbreak: pre-cancelled break removed the block");
+            }
         } catch (Throwable t) {
             fail.accept("blockbreak: " + t);
         } finally {
             HandlerList.unregisterAll(probe);
             block.setType(original == Material.AIR ? Material.AIR : original);
+            player.setGameMode(mode);
         }
     }
 
@@ -106,8 +136,15 @@ final class BreakProbe implements Listener {
     static void runItemDamage(Plugin plugin, Player player, Consumer<String> pass, Consumer<String> fail) {
         ItemDamageListener probe = new ItemDamageListener();
         org.bukkit.inventory.ItemStack held = player.getInventory().getItemInMainHand();
+        // A creative player takes no durability damage at all - NeoForge returns 0
+        // from processDurabilityChange for hasInfiniteMaterials - so the event
+        // correctly does not fire and the probe would report a false failure.
+        org.bukkit.GameMode mode = player.getGameMode();
         try {
             plugin.getServer().getPluginManager().registerEvents(probe, plugin);
+            if (mode == org.bukkit.GameMode.CREATIVE || mode == org.bukkit.GameMode.SPECTATOR) {
+                player.setGameMode(org.bukkit.GameMode.SURVIVAL);
+            }
             player.getInventory().setItemInMainHand(new org.bukkit.inventory.ItemStack(Material.DIAMOND_PICKAXE));
 
             Object handle = player.getClass().getMethod("getHandle").invoke(player);
@@ -119,15 +156,19 @@ final class BreakProbe implements Listener {
             hurt.invoke(nmsStack, 1, handle, mainHand);
 
             if (probe.fired > 0) {
-                pass.accept("itemdamage: PlayerItemDamageEvent fired from hurtAndBreak(LivingEntity, slot)");
+                pass.accept("itemdamage: PlayerItemDamageEvent fired from hurtAndBreak(LivingEntity, slot)"
+                        + " (game mode was " + mode + ")");
             } else {
-                fail.accept("itemdamage: PlayerItemDamageEvent did not fire - the hook is on the wrong overload");
+                fail.accept("itemdamage: PlayerItemDamageEvent did not fire from"
+                        + " hurtAndBreak(LivingEntity, slot); tested in "
+                        + player.getGameMode() + ", original mode " + mode);
             }
         } catch (Throwable t) {
             fail.accept("itemdamage: " + t);
         } finally {
             HandlerList.unregisterAll(probe);
             player.getInventory().setItemInMainHand(held);
+            player.setGameMode(mode);
         }
     }
 
