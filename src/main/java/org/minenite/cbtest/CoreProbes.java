@@ -80,6 +80,7 @@ final class CoreProbes implements Listener {
             this.worlds(world);
             this.blocks(world);
             this.entities(world);
+            this.moddedEntities(world);
             // After this point the entity probe's subject must survive until its
             // deferred checks run. Each step is followed by a liveness check so an
             // interfering probe names itself instead of being guessed at.
@@ -334,6 +335,30 @@ final class CoreProbes implements Listener {
         // while getDrops() is empty, so no plugin can modify mob drops and nothing
         // looks wrong from in game.
         this.deathDrops = event.getDrops() == null ? -1 : event.getDrops().size();
+    }
+
+    /**
+     * Every entity currently loaded must map to a Bukkit wrapper.
+     *
+     * <p>CraftEntity#getEntity threw an AssertionError for an entity type it did
+     * not recognise, and it is called from ServerLevel$EntityCallbacks during the
+     * world tick - so the first natural spawn of any unrecognised mod entity took
+     * the whole server down. Mekanism's baby skeletons did it minutes after
+     * install. Nothing in the suite covered it because every mod installed until
+     * then happened to add only blocks and items.
+     */
+    private void moddedEntities(World world) {
+        probe("modded entities", () -> {
+            int checked = 0;
+            java.util.Set<String> types = new java.util.HashSet<>();
+            for (Entity entity : world.getEntities()) {
+                // Touching the wrapper is the check: an unmappable entity throws.
+                types.add(entity.getType().name());
+                checked++;
+            }
+            this.pass.accept("entities: wrapped " + checked + " loaded entities across "
+                    + types.size() + " type(s) with no unmapped failures");
+        });
     }
 
     // ---------- projectiles ----------
