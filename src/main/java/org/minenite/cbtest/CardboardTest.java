@@ -137,6 +137,7 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             return;
         }
         BreakProbe.run(this, player, this::pass, this::fail);
+        BreakProbe.runItemDamage(this, player, this::pass, this::fail);
     }
 
     /** The first online player, or null. Lets a console run cover the player paths. */

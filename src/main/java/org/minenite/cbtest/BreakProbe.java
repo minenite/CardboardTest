@@ -92,6 +92,54 @@ final class BreakProbe implements Listener {
         }
     }
 
+    /**
+     * Damages a held tool through {@code ItemStack#hurtAndBreak(int, LivingEntity,
+     * EquipmentSlot)} and checks PlayerItemDamageEvent fires.
+     *
+     * <p>That method is the path every tool, weapon and armour piece takes.
+     * Vanilla routed it to the ServerPlayer overload of hurtAndBreak; NeoForge
+     * passes the LivingEntity directly, which resolves to a wider overload, so a
+     * hook on the narrow signature applied cleanly and stopped firing. Nothing
+     * else notices: durability still ticks down, so the only symptom is that
+     * plugins cancelling item damage are silently ignored.
+     */
+    static void runItemDamage(Plugin plugin, Player player, Consumer<String> pass, Consumer<String> fail) {
+        ItemDamageListener probe = new ItemDamageListener();
+        org.bukkit.inventory.ItemStack held = player.getInventory().getItemInMainHand();
+        try {
+            plugin.getServer().getPluginManager().registerEvents(probe, plugin);
+            player.getInventory().setItemInMainHand(new org.bukkit.inventory.ItemStack(Material.DIAMOND_PICKAXE));
+
+            Object handle = player.getClass().getMethod("getHandle").invoke(player);
+            Object nmsStack = handle.getClass().getMethod("getMainHandItem").invoke(handle);
+            Class<?> living = Class.forName("net.minecraft.world.entity.LivingEntity");
+            Class<?> slotType = Class.forName("net.minecraft.world.entity.EquipmentSlot");
+            Object mainHand = Enum.valueOf((Class<Enum>) slotType.asSubclass(Enum.class), "MAINHAND");
+            Method hurt = nmsStack.getClass().getMethod("hurtAndBreak", int.class, living, slotType);
+            hurt.invoke(nmsStack, 1, handle, mainHand);
+
+            if (probe.fired > 0) {
+                pass.accept("itemdamage: PlayerItemDamageEvent fired from hurtAndBreak(LivingEntity, slot)");
+            } else {
+                fail.accept("itemdamage: PlayerItemDamageEvent did not fire - the hook is on the wrong overload");
+            }
+        } catch (Throwable t) {
+            fail.accept("itemdamage: " + t);
+        } finally {
+            HandlerList.unregisterAll(probe);
+            player.getInventory().setItemInMainHand(held);
+        }
+    }
+
+    static final class ItemDamageListener implements Listener {
+        int fired;
+
+        @EventHandler
+        public void onDamage(org.bukkit.event.player.PlayerItemDamageEvent event) {
+            this.fired++;
+        }
+    }
+
     /** Calls the real game-mode method; null if it could not be reached. */
     private static Boolean destroyBlock(Player player, Block block) throws Exception {
         Object handle = player.getClass().getMethod("getHandle").invoke(player);
