@@ -89,6 +89,7 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
                     Player online = anyOnlinePlayer();
                     this.probeNms(online);
                     this.probeItemMeta(online);
+                    this.probeBlockBreak(online);
                     this.openGui(online);
                 }
                 this.report(sender);
@@ -115,16 +116,27 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             case "nms" -> this.probeNms(player);
             case "meta" -> this.probeItemMeta(player);
             case "mods" -> this.probeModdedContent(player);
+            case "break" -> this.probeBlockBreak(player);
             default -> {
                 this.probeNms(player);
                 this.probeItemMeta(player);
                 this.probeModdedContent(player);
+                this.probeBlockBreak(player);
                 this.openGui(player);
             }
         }
 
         this.report(player);
         return true;
+    }
+
+    /** destroyBlock needs a real player; see BreakProbe for why it must be the real path. */
+    private void probeBlockBreak(Player player) {
+        if (player == null) {
+            skip("blockbreak: driving destroyBlock needs a player online");
+            return;
+        }
+        BreakProbe.run(this, player, this::pass, this::fail);
     }
 
     /** The first online player, or null. Lets a console run cover the player paths. */
