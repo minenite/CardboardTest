@@ -117,6 +117,8 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             case "meta" -> this.probeItemMeta(player);
             case "mods" -> this.probeModdedContent(player);
             case "break" -> this.probeBlockBreak(player);
+            // Opt-in only: it kills the player for real. Not in 'all'.
+            case "respawn" -> RespawnProbe.run(player, this::pass, this::fail);
             default -> {
                 this.probeNms(player);
                 this.probeItemMeta(player);
