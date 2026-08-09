@@ -586,6 +586,19 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             fail("nms: Class.forName ServerLevel: " + t);
         }
 
+        // Loading this forces Mixin to transform it, which is the only way to see
+        // whether CompoundContainerMixin's getMaxStackSize replaced the target's or
+        // was skipped. The class is otherwise built only when a double chest is
+        // opened, so nothing headless ever touches it.
+        try {
+            Class<?> compound = Class.forName("net.minecraft.world.CompoundContainer");
+            java.lang.reflect.Method m = compound.getMethod("getMaxStackSize");
+            pass("nms: CompoundContainer loaded, getMaxStackSize declared by "
+                    + m.getDeclaringClass().getSimpleName());
+        } catch (Throwable t) {
+            fail("nms: CompoundContainer: " + t);
+        }
+
         // 5. CraftWorld#getHandle, the world-side equivalent of getHandle. This one
         // only ever needed a world, and the server always has one - taking it from
         // the player was why the whole probe was gated behind being in game.
