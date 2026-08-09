@@ -386,6 +386,51 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
         } catch (Throwable t) {
             fail("values: modded lookup threw " + t);
         }
+
+        // The call-site rewrite only redirects Material.values(). These three read
+        // Class's own enum cache instead, so they are the paths that stayed
+        // vanilla-only, and a library enumerating the enum generically takes one of
+        // them rather than the call the rewriter can see.
+        try {
+            Object[] constants = Material.class.getEnumConstants();
+            if (constants.length == all.length) {
+                pass("values: getEnumConstants() agrees with values() (" + constants.length + ")");
+            } else {
+                fail("values: getEnumConstants() has " + constants.length
+                        + " but values() has " + all.length);
+            }
+        } catch (Throwable t) {
+            fail("values: getEnumConstants() threw " + t);
+        }
+
+        try {
+            java.util.EnumSet<Material> set = java.util.EnumSet.allOf(Material.class);
+            if (set.size() == all.length && set.contains(block)) {
+                pass("values: EnumSet.allOf sees " + set.size() + " materials, modded included");
+            } else {
+                fail("values: EnumSet.allOf has " + set.size() + " and contains(" + block.name()
+                        + ")=" + set.contains(block) + ", values() has " + all.length);
+            }
+        } catch (Throwable t) {
+            fail("values: EnumSet.allOf threw " + t);
+        }
+
+        // EnumSet sizes its bit storage from the cached universe, so a modded
+        // constant whose ordinal sits past the vanilla length cannot even be stored
+        // unless the cache was extended. Same for EnumMap.
+        try {
+            java.util.EnumSet<Material> empty = java.util.EnumSet.noneOf(Material.class);
+            empty.add(block);
+            java.util.EnumMap<Material, String> map = new java.util.EnumMap<>(Material.class);
+            map.put(block, "ok");
+            if (empty.contains(block) && "ok".equals(map.get(block))) {
+                pass("values: a modded material can be stored in EnumSet and EnumMap");
+            } else {
+                fail("values: EnumSet/EnumMap did not retain a modded material");
+            }
+        } catch (Throwable t) {
+            fail("values: EnumSet/EnumMap with a modded material threw " + t);
+        }
     }
 
     /** Resolves a namespaced mod id to whatever Material name CardForge gave it. */
