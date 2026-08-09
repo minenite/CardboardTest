@@ -88,6 +88,11 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             return true;
         }
 
+        if (mode.equals("perm")) {
+            PermProbe.run(this, player);
+            return true;
+        }
+
         if (mode.equals("guard")) {
             boolean armed = GuardProbe.toggle(this);
             player.sendMessage(armed ? "GUARD ARMED" : "GUARD DISARMED");
@@ -135,7 +140,7 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             player.openInventory(inv);
             pass("inventory: created 27-slot GUI and opened it");
         } catch (Throwable t) {
-            fail("inventory: " + t);
+            failWith("inventory: " + t, t);
         }
     }
 
@@ -170,7 +175,7 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             player.getInventory().addItem(stack);
             pass("item meta: added the probe item to the player inventory");
         } catch (Throwable t) {
-            fail("item meta: " + t);
+            failWith("item meta: " + t, t);
         }
     }
 
@@ -394,7 +399,7 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             handle = getHandle.invoke(player);
             pass("nms: CraftPlayer#getHandle -> " + handle.getClass().getName());
         } catch (Throwable t) {
-            fail("nms: getHandle failed: " + t);
+            failWith("nms: getHandle failed: " + t, t);
         }
 
         // 2. Walk to a known NMS field on the handle
@@ -432,7 +437,7 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
             Object nmsWorld = getHandle.invoke(player.getWorld());
             pass("nms: CraftWorld#getHandle -> " + nmsWorld.getClass().getSimpleName());
         } catch (Throwable t) {
-            fail("nms: CraftWorld#getHandle: " + t);
+            failWith("nms: CraftWorld#getHandle: " + t, t);
         }
     }
 
@@ -483,6 +488,21 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
 
     private void skip(String message) {
         this.results.add(ChatColor.YELLOW + "[SKIP] " + ChatColor.RESET + message);
+    }
+
+    /** Prints the stack for a caught failure; the message alone is rarely enough. */
+    private void failWith(String message, Throwable t) {
+        fail(message);
+        for (StackTraceElement e : t.getStackTrace()) {
+            String c = e.getClassName();
+            if (c.startsWith("org.bukkit") || c.startsWith("org.cardboard") || c.startsWith("java.lang.Class")) {
+                this.results.add("[INFO]     at " + e);
+            }
+        }
+        Throwable cause = t.getCause();
+        if (cause != null) {
+            this.results.add("[INFO]     caused by " + cause);
+        }
     }
 
     private void fail(String message) {
