@@ -70,6 +70,12 @@ public final class CardboardTest extends JavaPlugin implements Listener, Command
                 sender.sendMessage("damage probe started; results follow in the log");
                 return true;
             }
+            if (mode.equals("fluids")) {
+                this.results.clear();
+                FluidProbe.run(Bukkit.getWorlds().get(0), this::pass, this::fail);
+                this.report(sender);
+                return true;
+            }
             if (mode.equals("mods") || mode.equals("core") || mode.equals("auto")) {
                 this.results.clear();
                 if (!mode.equals("core")) {
